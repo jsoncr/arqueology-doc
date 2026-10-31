@@ -9,6 +9,8 @@ This project is documented with **archeology-doc**. The knowledge lives in
 2. Read the stable memory: `{{ knowledge_dir }}/memory/facts.md`, `conventions.md`,
    `decisions.md` and `open-questions.md`.
 3. Review the open findings in `{{ knowledge_dir }}/findings/` (`state: open`).
+4. Before changing a zone of the code, run `adoc context <path> --format markdown`
+   (or `--format json`): its notes, open findings, tests and dependencies in one call.
 
 ### When ending a session
 

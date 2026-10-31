@@ -10,7 +10,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.10.22"
+version = "0.10.30"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/jsoncr/archeology-doc"

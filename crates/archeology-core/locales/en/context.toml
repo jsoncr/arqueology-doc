@@ -1,0 +1,70 @@
+# `adoc context`: warnings of the JSON contract (`context.*`, core) and the
+# text/markdown output (`cli.context.*`), in the UI language.
+# Placeholders: {name}. Keep the same keys and placeholders in
+# locales/es/context.toml.
+
+[context.warn]
+state_unreadable = "state.json could not be read ({error}); stale detection may be incomplete"
+no_inventory = "No inventory yet: modules and disabled tests are unknown (run `adoc scan`)"
+commit_mismatch = "{count} source file(s) changed between the documented commit {knowledge} and HEAD {head}: run `adoc sync` to detect outdated notes"
+commit_unknown = "The documented commit {knowledge} is not in this repository's history (HEAD is {head}): run `adoc sync`"
+unresolved = "Could not resolve `{input}`"
+unresolved_suggest = "Could not resolve `{input}`; did you mean: {suggestions}?"
+query_no_match = "No note matches the query `{query}`"
+ambiguous = "`{input}` is ambiguous; all matches are included: {matches}"
+secret_target = "`{input}` matches the secret patterns (scan.secrets_patterns) and is excluded"
+secret_evidence = "{count} evidence reference(s) to files excluded by the secret patterns were omitted"
+max_notes = "Showing {shown} of {total} notes (--max-notes)"
+max_chars = "Note content was cut to {max} characters in total (--max-chars)"
+undocumented = "No note cites files in `{path}`: document it with `adoc inspect`"
+stale = "{count} note(s) are outdated: verify them before relying on them (`adoc sync`, `adoc inspect`)"
+stale_pending = "{count} note(s) are outdated ({pending} with sources changed since the last sync: run `adoc sync`)"
+
+[context.stale]
+secret_source = "a source excluded by the secret patterns"
+marked = "marked stale by adoc sync"
+marked_sources = "marked stale by adoc sync: changed {sources}"
+pending = "source changed since last sync: {files}; run adoc sync"
+
+[cli.context]
+heading = "Context"
+no_match = "No target could be resolved."
+targets = "Targets"
+unresolved = "Unresolved"
+resolved_as = "{input} → {kind}"
+none = "—"
+next = "Next step"
+next_inspect = "adoc inspect   # document the zone"
+next_sync = "adoc sync      # refresh outdated notes"
+next_json = "adoc context {target} --format json   # full context for an agent"
+relevance = "relevance {value}"
+stale_tag = "outdated"
+evidence = "Evidence"
+invalid_evidence = "invalid evidence"
+more = "+{count} more"
+covered = "{count} covered"
+missing = "{count} missing"
+disabled = "{count} disabled"
+scenario_missing = "missing: {scenario}"
+outgoing = "uses"
+incoming = "used by"
+format_conflict = "--json cannot be combined with --format {format}"
+invalid_include = "Unknown section in --include: `{value}` (valid: {valid})"
+needs_target = "Give at least one target (path, module:<name>, feature:<name>) or --query"
+tests_none = "No test reports or disabled tests in this zone."
+
+[cli.context.section]
+zone = "Zone"
+modules = "Modules"
+features = "Features"
+notes = "Notes"
+findings = "Open findings"
+tests = "Tests"
+dependencies = "Dependencies"
+decisions = "Decisions"
+glossary = "Glossary"
+questions = "Open questions"
+warnings = "Warnings"
+
+[cli.doctor]
+context_contract = "`adoc context` JSON contract: schema_version {version}"

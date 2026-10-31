@@ -3332,8 +3332,42 @@ fn agent_use_opencode_model_needs_provider_and_shows_command() {
     let sb = Sandbox::new();
     fixture(&sb.root);
     sb.run(&["init", "--yes", "--agent", "manual"]);
-    let err = sb
-        .cmd()
+    // `opencode` falso delante en el PATH: el test no depende del opencode
+    // instalado en la máquina (ni de qué modelos tenga configurados).
+    let fake_bin = sb.root.parent().unwrap().join("fakebin");
+    fs::create_dir_all(&fake_bin).unwrap();
+    let path_env = if cfg!(unix) {
+        let script = fake_bin.join("opencode");
+        fs::write(
+            &script,
+            "#!/bin/sh\nif [ \"$1\" = models ]; then\n  echo anthropic/claude-sonnet-4-5\n  echo opencode/muse-spark-1.3-contributor-free\nfi\n",
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        format!(
+            "{}:{}",
+            fake_bin.display(),
+            std::env::var("PATH").unwrap_or_default()
+        )
+    } else {
+        // Sin opencode en el PATH la existencia del modelo no se verifica.
+        fake_bin.display().to_string()
+    };
+    let cmd = || {
+        let mut c = sb.cmd();
+        c.env("PATH", &path_env);
+        c
+    };
+    let stdout = |args: &[&str]| {
+        let out = cmd().args(args).assert().success();
+        String::from_utf8_lossy(&out.get_output().stdout).to_string()
+    };
+
+    let err = cmd()
         .args(["agent", "use", "opencode", "--model", "claude-sonnet-4-5"])
         .assert()
         .failure();
@@ -3344,15 +3378,36 @@ fn agent_use_opencode_model_needs_provider_and_shows_command() {
     let toml = fs::read_to_string(sb.root.join("archeology-doc.toml")).unwrap();
     assert!(!toml.contains("claude-sonnet-4-5"), "{toml}");
 
-    let err = sb
-        .cmd()
+    let err = cmd()
         .args(["agent", "use", "opencode", "--model", "Claude Sonnet 4.5"])
         .assert()
         .failure();
     let stderr = String::from_utf8_lossy(&err.get_output().stderr).to_string();
     assert!(stderr.contains("no llevan espacios"), "{stderr}");
 
-    let out = sb.run(&[
+    // Formato correcto pero el modelo no existe: error con sugerencias.
+    if cfg!(unix) {
+        let err = cmd()
+            .args([
+                "agent",
+                "use",
+                "opencode",
+                "--model",
+                "opencode/muse-spark-1.3",
+            ])
+            .assert()
+            .failure();
+        let stderr = String::from_utf8_lossy(&err.get_output().stderr).to_string();
+        assert!(stderr.contains("no existe"), "{stderr}");
+        assert!(
+            stderr.contains("opencode/muse-spark-1.3-contributor-free"),
+            "{stderr}"
+        );
+        let toml = fs::read_to_string(sb.root.join("archeology-doc.toml")).unwrap();
+        assert!(!toml.contains("muse-spark"), "{toml}");
+    }
+
+    let out = stdout(&[
         "agent",
         "use",
         "opencode",
@@ -3363,7 +3418,7 @@ fn agent_use_opencode_model_needs_provider_and_shows_command() {
         out.contains("Comando: opencode run --model anthropic/claude-sonnet-4-5 <prompt>"),
         "{out}"
     );
-    let out = sb.run(&["agent", "test", "--agent", "opencode"]);
+    let out = stdout(&["agent", "test", "--agent", "opencode"]);
     assert!(
         out.contains("opencode run --model anthropic/claude-sonnet-4-5 <prompt>"),
         "{out}"
@@ -3392,4 +3447,664 @@ fn unsupported_model_agent_errors_and_models_explains() {
     assert!(out.contains("no tiene un comando para listar"), "{out}");
     let out = sb.run(&["agent", "models", "amp"]);
     assert!(out.contains("no permite elegir el modelo"), "{out}");
+}
+
+// --- context ---
+
+/// Contrato JSON de `adoc context` (raíz del repositorio).
+const CONTEXT_SCHEMA: &str = include_str!("../../../schemas/context.v1.schema.json");
+
+/// Validador mínimo de JSON Schema (subconjunto que usa el contrato:
+/// `type`, `required`, `properties`, `items`, `enum`, `minimum`, `maximum`
+/// y `$ref` a `#/$defs/...`). Devuelve los errores con su ruta.
+fn schema_errors(
+    schema: &serde_json::Value,
+    root: &serde_json::Value,
+    value: &serde_json::Value,
+    path: &str,
+    errors: &mut Vec<String>,
+) {
+    use serde_json::Value;
+    if let Some(r) = schema.get("$ref").and_then(Value::as_str) {
+        let name = r.trim_start_matches("#/$defs/");
+        return schema_errors(&root["$defs"][name], root, value, path, errors);
+    }
+    if let Some(t) = schema.get("type") {
+        let types: Vec<&str> = match t {
+            Value::String(s) => vec![s.as_str()],
+            Value::Array(a) => a.iter().filter_map(Value::as_str).collect(),
+            _ => vec![],
+        };
+        let ok = types.iter().any(|t| match *t {
+            "object" => value.is_object(),
+            "array" => value.is_array(),
+            "string" => value.is_string(),
+            "integer" => value.is_i64() || value.is_u64(),
+            "number" => value.is_number(),
+            "boolean" => value.is_boolean(),
+            "null" => value.is_null(),
+            _ => false,
+        });
+        if !ok {
+            errors.push(format!("{path}: tipo {types:?}, valor {value}"));
+            return;
+        }
+    }
+    if let Some(e) = schema.get("enum").and_then(Value::as_array) {
+        if !e.contains(value) {
+            errors.push(format!("{path}: {value} no está en {e:?}"));
+        }
+    }
+    if let (Some(min), Some(v)) = (
+        schema.get("minimum").and_then(Value::as_f64),
+        value.as_f64(),
+    ) {
+        if v < min {
+            errors.push(format!("{path}: {v} < {min}"));
+        }
+    }
+    if let (Some(max), Some(v)) = (
+        schema.get("maximum").and_then(Value::as_f64),
+        value.as_f64(),
+    ) {
+        if v > max {
+            errors.push(format!("{path}: {v} > {max}"));
+        }
+    }
+    if let Some(obj) = value.as_object() {
+        for req in schema
+            .get("required")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
+            if !obj.contains_key(req) {
+                errors.push(format!("{path}: falta `{req}`"));
+            }
+        }
+        if let Some(props) = schema.get("properties").and_then(Value::as_object) {
+            for (k, s) in props {
+                if let Some(v) = obj.get(k) {
+                    schema_errors(s, root, v, &format!("{path}.{k}"), errors);
+                }
+            }
+        }
+    }
+    if let (Some(items), Some(arr)) = (schema.get("items"), value.as_array()) {
+        for (i, v) in arr.iter().enumerate() {
+            schema_errors(items, root, v, &format!("{path}[{i}]"), errors);
+        }
+    }
+}
+
+/// Falla si `value` no cumple el contrato `context.v1`.
+fn assert_context_schema(value: &serde_json::Value) {
+    let schema: serde_json::Value = serde_json::from_str(CONTEXT_SCHEMA).unwrap();
+    let mut errors = Vec::new();
+    schema_errors(&schema, &schema, value, "$", &mut errors);
+    assert!(errors.is_empty(), "{errors:#?}\n{value:#}");
+}
+
+/// `adoc context` con argumentos: (código, stdout, stderr).
+fn context_run(sb: &Sandbox, lang: &str, args: &[&str]) -> (i32, String, String) {
+    let out = sb
+        .cmd()
+        .env("ADOC_LANG", lang)
+        .arg("context")
+        .args(args)
+        .output()
+        .unwrap();
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).to_string(),
+        String::from_utf8_lossy(&out.stderr).to_string(),
+    )
+}
+
+/// `adoc context ... --format json`, validado contra el schema.
+fn context_json(sb: &Sandbox, args: &[&str]) -> (i32, serde_json::Value) {
+    let mut all = args.to_vec();
+    all.extend(["--format", "json"]);
+    let (code, out, err) = context_run(sb, "es", &all);
+    let v: serde_json::Value =
+        serde_json::from_str(&out).unwrap_or_else(|e| panic!("{e}: {out}\n{err}"));
+    assert_context_schema(&v);
+    (code, v)
+}
+
+fn str_list(v: &serde_json::Value, key: &str) -> Vec<String> {
+    v.as_array()
+        .unwrap()
+        .iter()
+        .map(|x| x[key].as_str().unwrap_or("").to_string())
+        .collect()
+}
+
+/// Proyecto con módulos, funcionalidad, hallazgos, reporte de tests,
+/// decisión, glosario, duda abierta y un archivo secreto citado.
+fn context_fixture(sb: &Sandbox) {
+    let root = &sb.root;
+    let w = |rel: &str, text: &str| {
+        let p = root.join(rel);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, text).unwrap();
+    };
+    w("src/billing/invoice.py", &"x = 1\n".repeat(10));
+    w("src/billing/tax.py", "IVA = 0.13\n");
+    w("src/billing/credentials.json", "{\"token\": \"s3cr3t\"}\n");
+    w(
+        "src/billing/test_invoice.py",
+        "import pytest\n@pytest.mark.skip\ndef test_x(): pass\n",
+    );
+    w("src/auth/login.py", "def login(): pass\n");
+    sb.run(&["init", "--yes", "--agent", "manual"]);
+    w(
+        "knowledge/modules/billing.md",
+        "---\nid: mod-billing\ntype: module\ntitle: Facturación\nstatus: draft\nsources: [src/billing/invoice.py:1-5]\n---\n\
+         # Facturación\n\n<!-- archeology-doc:begin summary -->\nCobros, facturas e impuestos.\n<!-- archeology-doc:end summary -->\n",
+    );
+    w(
+        "knowledge/modules/auth.md",
+        "---\nid: mod-auth\ntype: module\ntitle: Autenticación\nstatus: draft\nsources: [src/auth/login.py:1]\n---\n# Autenticación\n\nInicio de sesión.\n",
+    );
+    w(
+        "knowledge/features/checkout.md",
+        "---\nid: feat-checkout\ntype: feature\ntitle: Checkout\nstatus: draft\nmodules: [billing]\n\
+         sources: [src/billing/invoice.py:2-3, src/billing/credentials.json]\n---\n# Checkout\n\n\
+         <!-- archeology-doc:begin summary -->\nCobra el carrito y emite la factura.\n<!-- archeology-doc:end summary -->\n\n\
+         Requiere sesión: ver [[auth]].\n",
+    );
+    w(
+        "knowledge/findings/rounding.md",
+        "---\nid: find-rounding\ntype: finding\ntitle: Redondeo distinto\nkind: contradiction\nseverity: high\nstate: open\n\
+         related: [feat-checkout]\nsources: [src/billing/invoice.py:4-99]\n---\n# Redondeo\n\n## Descripción\n\nEl total redondea distinto que el impuesto.\n",
+    );
+    w(
+        "knowledge/findings/old.md",
+        "---\nid: find-old\ntype: finding\ntitle: Código muerto viejo\nkind: dead-code\nseverity: low\nstate: resolved\nsources: [src/billing/tax.py:1]\n---\n# Viejo\n",
+    );
+    w(
+        "knowledge/tests/checkout.md",
+        "---\nid: test-checkout\ntype: test-report\ntitle: \"Tests: Checkout\"\nfeature: feat-checkout\ncovered_scenarios: 1\nmissing_scenarios: 1\n\
+         test_files: [src/billing/test_invoice.py]\nsources: [src/billing/test_invoice.py:1]\n---\n# Cobertura\n\n## Escenarios cubiertos\n\n\
+         | Escenario | Tests |\n|-----------|-------|\n| Cobro exitoso | src/billing/test_invoice.py:3 |\n\n## Escenarios faltantes\n\n\
+         | Escenario | Tipo | Prioridad sugerida |\n|---|---|---|\n| Tarjeta rechazada | error | alta |\n",
+    );
+    w(
+        "knowledge/decisions/money.md",
+        "---\nid: dec-money\ntype: decision\ntitle: Montos en centavos\nsources: [src/billing/tax.py:1]\n---\n# Montos\n\n> Inferida.\n\n## Contexto\n\nErrores de redondeo.\n\n## Decisión\n\nGuardar montos en centavos.\n",
+    );
+    w(
+        "knowledge/glossary/iva.md",
+        "---\nid: glossary-iva\ntype: glossary\ntitle: IVA\nsources: [src/billing/tax.py:1]\n---\n# IVA\n\nImpuesto al valor agregado.\n",
+    );
+    w(
+        "knowledge/memory/open-questions.md",
+        "---\nid: memory-open-questions\ntype: memory\ntitle: Dudas\n---\n# Dudas\n\n- ¿El módulo billing redondea por línea o por total?\n- ¿Quién mantiene el login?\n",
+    );
+    sb.run(&["scan"]);
+}
+
+#[test]
+fn context_resolves_path_module_feature_and_bare_targets() {
+    let sb = Sandbox::new();
+    context_fixture(&sb);
+
+    // Ruta (carpeta): módulos que la contienen y notas con evidencia en ella.
+    let (code, v) = context_json(&sb, &["src/billing/"]);
+    assert_eq!(code, 0);
+    assert_eq!(v["schema_version"], 1);
+    assert_eq!(v["resolved_targets"][0]["kind"], "path");
+    let matches = v["resolved_targets"][0]["matches"].as_array().unwrap();
+    assert!(matches.iter().any(|m| m == "module:billing"), "{v:#}");
+    let notes = str_list(&v["notes"], "path");
+    assert!(notes.contains(&"knowledge/features/checkout.md".to_string()));
+    assert!(notes.contains(&"knowledge/glossary/iva.md".to_string()));
+    // Hallazgos: solo abiertos; evidencia fuera de rango → valid:false.
+    let findings = v["findings"].as_array().unwrap();
+    assert_eq!(findings.len(), 1, "{v:#}");
+    assert_eq!(findings[0]["id"], "find-rounding");
+    assert_eq!(findings[0]["category"], "contradiction");
+    assert_eq!(findings[0]["evidence"][0]["valid"], false);
+    // Tests: tabla de cubiertos/faltantes y test desactivado del inventario.
+    assert_eq!(v["tests"]["covered"][0]["scenario"], "Cobro exitoso");
+    assert_eq!(
+        v["tests"]["covered"][0]["tests"][0],
+        "src/billing/test_invoice.py:3"
+    );
+    assert_eq!(v["tests"]["missing"][0]["scenario"], "Tarjeta rechazada");
+    assert_eq!(v["tests"]["missing"][0]["feature"], "feature:checkout");
+    assert_eq!(
+        v["tests"]["disabled_or_empty"][0]["file"],
+        "src/billing/test_invoice.py"
+    );
+    assert!(v["tests"]["disabled_or_empty"][0]["line"].is_null());
+    assert_eq!(v["decisions"][0]["summary"], "Guardar montos en centavos.");
+    assert_eq!(v["glossary"][0]["term"], "IVA");
+    assert_eq!(v["open_questions"][0]["id"], "memory#1");
+
+    // Archivo con separadores de Windows: normalizado a `/`.
+    let (code, v) = context_json(&sb, &["src\\billing\\invoice.py"]);
+    assert_eq!(code, 0);
+    assert_eq!(v["resolved_targets"][0]["kind"], "path");
+    assert!(str_list(&v["notes"], "path").contains(&"knowledge/modules/billing.md".to_string()));
+    assert_eq!(
+        v["resolved_targets"][0]["input"],
+        "src\\billing\\invoice.py"
+    );
+    let mut rest = v.clone();
+    rest["resolved_targets"] = serde_json::Value::Null;
+    rest["project"] = serde_json::Value::Null;
+    // Una `\` literal se serializa como `\\` en JSON.
+    assert!(!rest.to_string().contains("\\\\"), "{rest}");
+
+    // Módulo y funcionalidad con prefijo; sin prefijo por título normalizado.
+    let (_, v) = context_json(&sb, &["module:billing"]);
+    assert_eq!(v["modules"][0]["id"], "module:billing");
+    assert_eq!(v["modules"][0]["summary"], "Cobros, facturas e impuestos.");
+    assert_eq!(v["notes"][0]["path"], "knowledge/modules/billing.md");
+    assert_eq!(v["notes"][0]["relevance"], 1.0);
+    let (_, v) = context_json(&sb, &["feature:checkout"]);
+    assert_eq!(v["features"][0]["id"], "feature:checkout");
+    assert_eq!(v["features"][0]["modules"][0], "module:billing");
+    let (_, v) = context_json(&sb, &["facturacion"]);
+    assert_eq!(v["resolved_targets"][0]["kind"], "module");
+    let (_, v) = context_json(&sb, &["CHECKOUT"]);
+    assert_eq!(v["resolved_targets"][0]["kind"], "feature");
+
+    // Varios objetivos y --query.
+    let (_, v) = context_json(
+        &sb,
+        &["module:auth", "feature:checkout", "--query", "centavos"],
+    );
+    let kinds: Vec<&str> = v["resolved_targets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(kinds, vec!["module", "feature", "query"]);
+
+    // Secretos: nunca aparecen aunque una nota los cite.
+    let (_, v) = context_json(&sb, &["src/billing/", "--content", "full"]);
+    assert!(!v.to_string().contains("credentials.json"), "{v:#}");
+    assert!(!v.to_string().contains("s3cr3t"));
+    let (code, v) = context_json(&sb, &["src/billing/credentials.json"]);
+    assert_eq!(code, 2);
+    assert_eq!(v["unresolved_targets"][0], "src/billing/credentials.json");
+}
+
+#[test]
+fn context_unresolved_ambiguous_and_exit_codes() {
+    let sb = Sandbox::new();
+    context_fixture(&sb);
+    // Inexistente: código 2, JSON válido y sugerencia.
+    let (code, v) = context_json(&sb, &["module:biling"]);
+    assert_eq!(code, 2);
+    assert!(v["resolved_targets"].as_array().unwrap().is_empty());
+    assert!(
+        v["warnings"].to_string().contains("module:billing"),
+        "{v:#}"
+    );
+    // Uno resuelto y otro no: éxito con la lista de no resueltos.
+    let (code, v) = context_json(&sb, &["module:auth", "nada-por-aqui"]);
+    assert_eq!(code, 0);
+    assert_eq!(v["unresolved_targets"][0], "nada-por-aqui");
+    // Ambiguo: todas las coincidencias y aviso.
+    fs::write(
+        sb.root.join("knowledge/features/checkout2.md"),
+        "---\nid: feat-checkout2\ntype: feature\ntitle: Checkout\nsources: [src/auth/login.py:1]\n---\n# Checkout 2\n",
+    )
+    .unwrap();
+    // Mismo título: por id/archivo gana la coincidencia exacta; por título, ambas.
+    let (code, v) = context_json(&sb, &["checkout"]);
+    assert_eq!(code, 0);
+    assert_eq!(
+        v["resolved_targets"][0]["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    let (_, v) = context_json(&sb, &["feature:Checkout"]);
+    assert_eq!(
+        v["resolved_targets"][0]["matches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(v["warnings"].to_string().contains("ambiguo"), "{v:#}");
+
+    // Errores de uso: código 1 (no el 2 de clap).
+    let (code, _, err) = context_run(&sb, "es", &["module:auth", "--content", "todo"]);
+    assert_eq!(code, 1, "{err}");
+    let (code, _, err) = context_run(&sb, "es", &["module:auth", "--json", "--format", "text"]);
+    assert_eq!(code, 1, "{err}");
+    assert!(err.contains("--json"), "{err}");
+    let (code, _, _) = context_run(&sb, "es", &[]);
+    assert_eq!(code, 1);
+    let (code, _, _) = context_run(&sb, "es", &["module:auth", "--include", "modulos"]);
+    assert_eq!(code, 1);
+    // `--json` es alias de `--format json`.
+    let (code, out, _) = context_run(&sb, "es", &["module:auth", "--json"]);
+    assert_eq!(code, 0);
+    assert_context_schema(&serde_json::from_str(&out).unwrap());
+    // Sin proyecto: código 1.
+    let empty = Sandbox::new();
+    let (code, _, _) = context_run(&empty, "es", &["src"]);
+    assert_eq!(code, 1);
+    // Los demás comandos conservan el código de uso de clap.
+    let out = sb
+        .cmd()
+        .args(["status", "--format", "xml"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+}
+
+#[test]
+fn context_depth_and_dependencies() {
+    let sb = Sandbox::new();
+    context_fixture(&sb);
+    let (_, v0) = context_json(&sb, &["feature:checkout", "--depth", "0"]);
+    assert!(v0["dependencies"]["outgoing"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert!(!str_list(&v0["notes"], "path").contains(&"knowledge/modules/auth.md".to_string()));
+    let (_, v1) = context_json(&sb, &["feature:checkout", "--depth", "1"]);
+    let out = v1["dependencies"]["outgoing"].as_array().unwrap();
+    assert!(
+        out.iter()
+            .any(|e| e["to"] == "module:auth" && e["depth"] == 1),
+        "{v1:#}"
+    );
+    let auth = v1["notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["path"] == "knowledge/modules/auth.md")
+        .unwrap();
+    assert_eq!(auth["relevance"], 0.6);
+    let (_, v2) = context_json(&sb, &["module:auth", "--depth", "2"]);
+    let incoming = v2["dependencies"]["incoming"].as_array().unwrap();
+    assert!(
+        incoming
+            .iter()
+            .any(|e| e["from"] == "feature:checkout" && e["depth"] == 1),
+        "{v2:#}"
+    );
+    assert!(incoming.iter().any(|e| e["depth"] == 2), "{v2:#}");
+}
+
+#[test]
+fn context_stale_and_fail_on_stale() {
+    let sb = Sandbox::new();
+    context_fixture(&sb);
+    let (code, _) = context_json(&sb, &["module:auth", "--fail-on-stale"]);
+    assert_eq!(code, 0);
+    // Pendiente: la fuente cambió desde el último sync/scan.
+    sb.run(&["sync"]);
+    fs::write(sb.root.join("src/auth/login.py"), "def login(): return 1\n").unwrap();
+    let (code, v) = context_json(&sb, &["module:auth", "--fail-on-stale"]);
+    assert_eq!(code, 3, "{v:#}");
+    assert!(v["notes"][0]["stale_reason"]
+        .as_str()
+        .unwrap()
+        .contains("adoc sync"));
+    let (code, _) = context_json(&sb, &["module:auth"]);
+    assert_eq!(code, 0);
+    // Marcada por `sync`: mismo criterio.
+    sb.run(&["sync"]);
+    let (code, v) = context_json(&sb, &["module:auth", "--fail-on-stale"]);
+    assert_eq!(code, 3);
+    assert_eq!(v["modules"][0]["stale"], true);
+    assert!(v["warnings"][0]
+        .as_str()
+        .unwrap()
+        .contains("desactualizada"));
+}
+
+#[test]
+fn context_limits_and_content_modes() {
+    let sb = Sandbox::new();
+    context_fixture(&sb);
+    let (_, v) = context_json(&sb, &["src/billing/", "--max-notes", "2"]);
+    assert_eq!(v["notes"].as_array().unwrap().len(), 2);
+    assert!(v["warnings"].to_string().contains("--max-notes"));
+    let rel: Vec<f64> = v["notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n["relevance"].as_f64().unwrap())
+        .collect();
+    assert!(rel[0] >= rel[1]);
+
+    let (_, v) = context_json(&sb, &["src/billing/", "--max-chars", "30"]);
+    let total: usize = v["notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| {
+            n["content"]
+                .as_str()
+                .unwrap()
+                .replace("…[truncated]", "")
+                .chars()
+                .count()
+        })
+        .sum();
+    assert!(total <= 30, "{total}");
+    assert!(v["notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|n| n["truncated"] == true));
+    assert!(v["warnings"].to_string().contains("--max-chars"));
+
+    let (_, none) = context_json(&sb, &["feature:checkout", "--content", "none"]);
+    assert_eq!(none["notes"][0]["content"], "");
+    let (_, ex) = context_json(&sb, &["feature:checkout"]);
+    assert_eq!(
+        ex["notes"][0]["content"],
+        "Cobra el carrito y emite la factura."
+    );
+    let (_, full) = context_json(&sb, &["feature:checkout", "--content", "full"]);
+    let content = full["notes"][0]["content"].as_str().unwrap();
+    assert!(content.contains("Requiere sesión") && !content.contains("archeology-doc:begin"));
+
+    // --include: las secciones excluidas quedan como listas vacías.
+    let (_, v) = context_json(&sb, &["src/billing/", "--include", "findings,tests"]);
+    assert!(v["notes"].as_array().unwrap().is_empty());
+    assert!(v["modules"].as_array().unwrap().is_empty());
+    assert!(!v["findings"].as_array().unwrap().is_empty());
+    // --all-findings: también los resueltos.
+    let (_, v) = context_json(&sb, &["src/billing/", "--all-findings"]);
+    assert_eq!(v["findings"].as_array().unwrap().len(), 2);
+    // Salida determinista (salvo la fecha).
+    let strip = |mut v: serde_json::Value| {
+        v["project"]["generated_at"] = serde_json::Value::Null;
+        v
+    };
+    let (_, a) = context_json(&sb, &["src/billing/"]);
+    let (_, b) = context_json(&sb, &["src/billing/"]);
+    assert_eq!(strip(a), strip(b));
+}
+
+#[test]
+fn context_text_and_markdown_follow_the_interface_language() {
+    let sb = Sandbox::new();
+    context_fixture(&sb);
+    let (code, es, _) = context_run(&sb, "es", &["src/billing/"]);
+    assert_eq!(code, 0);
+    for s in [
+        "Zona",
+        "Módulos",
+        "Hallazgos abiertos",
+        "Tests",
+        "Siguiente paso",
+        "falta: Tarjeta rechazada",
+    ] {
+        assert!(es.contains(s), "{s}\n{es}");
+    }
+    let (_, en, _) = context_run(&sb, "en", &["src/billing/"]);
+    for s in [
+        "Zone",
+        "Modules",
+        "Open findings",
+        "Next step",
+        "missing: Tarjeta rechazada",
+    ] {
+        assert!(en.contains(s), "{s}\n{en}");
+    }
+    assert!(!en.contains('\x1b'), "sin colores fuera de una terminal");
+    let (_, md, _) = context_run(&sb, "en", &["src/billing/", "--format", "markdown"]);
+    assert!(md.starts_with("# Context: `src/billing/`"), "{md}");
+    assert!(md.contains("## Open findings"));
+    assert!(
+        md.contains("`src/billing/invoice.py:4-99` (invalid evidence)"),
+        "{md}"
+    );
+    let (code, out, _) = context_run(&sb, "en", &["module:nope"]);
+    assert_eq!(code, 2);
+    assert!(out.contains("No target could be resolved"), "{out}");
+    // doctor anuncia la versión del contrato.
+    let doctor: serde_json::Value =
+        serde_json::from_str(&sb.run(&["doctor", "--format", "json"])).unwrap();
+    assert_eq!(doctor["context_schema_version"], 1);
+}
+
+/// `git add -A && git commit` en el sandbox.
+fn context_git_commit(root: &Path, msg: &str) {
+    for args in [
+        vec!["add", "-A"],
+        vec![
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "-m",
+            msg,
+        ],
+    ] {
+        let ok = std::process::Command::new("git")
+            .args(&args)
+            .current_dir(root)
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "git {args:?}");
+    }
+}
+
+fn context_state(sb: &Sandbox) -> serde_json::Value {
+    serde_json::from_str(&fs::read_to_string(sb.work().join("state.json")).unwrap()).unwrap()
+}
+
+/// `scan` no fija el commit documentado (solo `sync`) ni necesita el estado;
+/// el aviso de commit solo aparece si cambió código, no por commitear el vault.
+#[test]
+fn context_commit_warning_only_for_source_changes() {
+    let sb = Sandbox::new();
+    context_fixture(&sb);
+    git_init(&sb.root);
+    sb.run(&["scan"]);
+    let state_path = sb.work().join("state.json");
+    if state_path.is_file() {
+        assert!(context_state(&sb).get("knowledge_commit").is_none());
+    }
+    sb.run(&["sync"]);
+    assert!(context_state(&sb)["knowledge_commit"].is_string());
+    let commit_warning = |v: &serde_json::Value| {
+        v["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|w| w.as_str().unwrap().contains("HEAD"))
+    };
+
+    // Commitear solo el vault y los archivos de adoc: sin aviso.
+    let note = sb.root.join("knowledge/modules/auth.md");
+    let text = fs::read_to_string(&note).unwrap();
+    fs::write(&note, format!("{text}\nMás detalle.\n")).unwrap();
+    fs::write(sb.root.join("AGENTS.md"), "# agentes\n").unwrap();
+    context_git_commit(&sb.root, "docs");
+    let (_, v) = context_json(&sb, &["module:auth"]);
+    assert!(!commit_warning(&v), "{v:#}");
+
+    // Un cambio de código commiteado: aviso con el número de archivos.
+    fs::write(sb.root.join("src/auth/login.py"), "def login(): return 3\n").unwrap();
+    context_git_commit(&sb.root, "code");
+    let (_, v) = context_json(&sb, &["module:auth"]);
+    assert!(
+        v["warnings"].to_string().contains("1 archivo(s) de código"),
+        "{v:#}"
+    );
+
+    // Commit documentado desconocido: aviso más suave.
+    let mut st = context_state(&sb);
+    st["knowledge_commit"] = "0123456789abcdef0123456789abcdef01234567".into();
+    fs::write(sb.work().join("state.json"), st.to_string()).unwrap();
+    let (_, v) = context_json(&sb, &["module:auth"]);
+    assert!(
+        v["warnings"]
+            .to_string()
+            .contains("no está en el historial"),
+        "{v:#}"
+    );
+
+    // `scan` con un state.json corrupto no se interrumpe.
+    fs::write(sb.work().join("state.json"), "{corrupto").unwrap();
+    fs::remove_file(sb.root.join("knowledge/00-overview.md")).unwrap();
+    sb.run(&["scan"]);
+    assert!(sb.root.join("knowledge/00-overview.md").is_file());
+}
+
+/// `../billing` desde `src/auth` y la raíz absoluta del proyecto.
+#[test]
+fn context_cwd_relative_and_absolute_root_targets() {
+    let sb = Sandbox::new();
+    context_fixture(&sb);
+    let out = sb
+        .cmd()
+        .current_dir(sb.root.join("src/auth"))
+        .args(["context", "../billing", "--format", "json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_context_schema(&v);
+    assert_eq!(v["resolved_targets"][0]["kind"], "path");
+    assert!(str_list(&v["notes"], "path").contains(&"knowledge/modules/billing.md".to_string()));
+    let root = sb.root.to_string_lossy().to_string();
+    for target in [root.clone(), format!("{root}/")] {
+        let (code, v) = context_json(&sb, &[&target]);
+        assert_eq!(code, 0, "{target}");
+        assert_eq!(v["resolved_targets"][0]["kind"], "path");
+        assert!(!v["notes"].as_array().unwrap().is_empty());
+    }
+}
+
+/// Solo `--query`: las coincidencias hacen de zona (funcionalidades, tests,
+/// dependencias) y `--depth` aplica.
+#[test]
+fn context_query_only_populates_the_zone() {
+    let sb = Sandbox::new();
+    context_fixture(&sb);
+    let (code, v) = context_json(&sb, &["--query", "carrito"]);
+    assert_eq!(code, 0);
+    assert_eq!(v["resolved_targets"][0]["kind"], "query");
+    assert_eq!(v["features"][0]["id"], "feature:checkout", "{v:#}");
+    assert_eq!(v["modules"][0]["id"], "module:billing");
+    assert!(!v["tests"]["missing"].as_array().unwrap().is_empty());
+    assert!(!v["dependencies"]["outgoing"].as_array().unwrap().is_empty());
+    let (_, v0) = context_json(&sb, &["--query", "carrito", "--depth", "0"]);
+    assert!(v0["dependencies"]["outgoing"]
+        .as_array()
+        .unwrap()
+        .is_empty());
 }

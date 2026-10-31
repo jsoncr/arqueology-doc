@@ -271,6 +271,21 @@ about = "Resumen del proyecto: estructura, progreso, tareas pendientes y siguien
 [cli.help.status.arg]
 format = "Formato de salida"
 
+[cli.help.context]
+about = "Contexto documentado de zonas del código (notas, hallazgos, tests, dependencias) para agentes y scripts"
+[cli.help.context.arg]
+targets = "Objetivos: ruta (archivo o carpeta), module:<nombre>, feature:<nombre> o un nombre sin prefijo (se prueba como ruta, módulo y funcionalidad)"
+query = "Busca en títulos y contenido de las notas (se combina con los objetivos)"
+depth = "Saltos del grafo para dependencias y notas relacionadas (0 = solo el objetivo)"
+include = "Secciones a incluir, separadas por comas (por defecto, todas)"
+max_notes = "Máximo de notas, por relevancia"
+max_chars = "Límite total de caracteres del contenido de las notas (0 = sin límite)"
+content = "Contenido de las notas: none, excerpt (resumen o primeros párrafos) o full"
+format = "Formato de salida (por defecto, text; json es el contrato estable)"
+json = "Alias de --format json"
+fail_on_stale = "Termina con código 3 si alguna nota incluida está desactualizada"
+all_findings = "Incluye también los hallazgos resueltos y descartados"
+
 [cli.help.doctor]
 about = "Verifica requisitos: git, Node, VitePress, OpenSpec, agentes y configuración"
 [cli.help.doctor.arg]

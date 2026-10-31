@@ -9,6 +9,8 @@ Este proyecto está documentado con **archeology-doc**. El conocimiento vive en
 2. Lee la memoria estable: `{{ knowledge_dir }}/memory/facts.md`, `conventions.md`,
    `decisions.md` y `open-questions.md`.
 3. Revisa los hallazgos abiertos en `{{ knowledge_dir }}/findings/` (`state: open`).
+4. Antes de cambiar una zona del código, ejecuta `adoc context <ruta> --format markdown`
+   (o `--format json`): sus notas, hallazgos abiertos, tests y dependencias en una llamada.
 
 ### Al terminar una sesión
 

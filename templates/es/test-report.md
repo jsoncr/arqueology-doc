@@ -20,6 +20,9 @@ locked: false
 
 ## Escenarios cubiertos
 
+| Escenario | Tests |
+|-----------|-------|
+
 ## Escenarios faltantes
 
 | Escenario | Tipo | Prioridad sugerida |

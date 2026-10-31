@@ -248,6 +248,21 @@ about = "Project snapshot: structure, progress, pending tasks and next step (`--
 [cli.help.status.arg]
 format = "Output format"
 
+[cli.help.context]
+about = "Documented context of code zones (notes, findings, tests, dependencies) for agents and scripts"
+[cli.help.context.arg]
+targets = "Targets: path (file or folder), module:<name>, feature:<name> or a bare name (tried as path, module, then feature)"
+query = "Search note titles and content (combined with the targets)"
+depth = "Graph hops for dependencies and related notes (0 = only the target)"
+include = "Sections to include, comma-separated (default: all)"
+max_notes = "Maximum number of notes, by relevance"
+max_chars = "Total character limit for note content (0 = no limit)"
+content = "Note content: none, excerpt (summary or first paragraphs) or full"
+format = "Output format (default: text; json is the stable contract)"
+json = "Alias of --format json"
+fail_on_stale = "Exit with code 3 if an included note is outdated"
+all_findings = "Also include resolved and dismissed findings"
+
 [cli.help.doctor]
 about = "Check requirements: git, Node, VitePress, OpenSpec, agents and configuration"
 [cli.help.doctor.arg]

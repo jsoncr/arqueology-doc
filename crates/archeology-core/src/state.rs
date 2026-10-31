@@ -41,6 +41,10 @@ pub struct State {
     /// clon o worktree con el mismo `project.id` comparte el estado.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_root: Option<String>,
+    /// Commit de git en el que `sync` comparó por última vez las fuentes con
+    /// las notas (`adoc context` avisa si cambió código desde entonces).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub knowledge_commit: Option<String>,
 }
 
 impl Default for State {
@@ -56,6 +60,7 @@ impl Default for State {
             questions: BTreeMap::new(),
             project_id: None,
             project_root: None,
+            knowledge_commit: None,
         }
     }
 }

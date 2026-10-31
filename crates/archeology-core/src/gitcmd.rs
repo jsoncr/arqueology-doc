@@ -38,6 +38,17 @@ pub fn git_command(dir: &Path) -> Command {
     cmd
 }
 
+/// Hash completo de `HEAD` en `dir` (None sin git, sin repositorio o sin commits).
+pub fn head_commit(dir: &Path) -> Option<String> {
+    let out = git_command(dir)
+        .args(["rev-parse", "--verify", "-q", "HEAD"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())?;
+    let hash = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!hash.is_empty()).then_some(hash)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

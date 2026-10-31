@@ -61,6 +61,16 @@ pub fn run(args: DoctorArgs, project_arg: Option<String>) -> Result<i32> {
         None,
     );
 
+    // Versión del contrato JSON de `adoc context` que entiende este binario.
+    r.add(
+        "context",
+        Level::Ok,
+        t!(
+            "cli.doctor.context_contract",
+            version = archeology_core::zone::SCHEMA_VERSION
+        ),
+        None,
+    );
     check_config_dir(&mut r);
     check_registry(&mut r);
 
@@ -111,6 +121,7 @@ pub fn run(args: DoctorArgs, project_arg: Option<String>) -> Result<i32> {
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
                 "ok": !failed,
+                "context_schema_version": archeology_core::zone::SCHEMA_VERSION,
                 "checks": r.0,
             }))?
         );

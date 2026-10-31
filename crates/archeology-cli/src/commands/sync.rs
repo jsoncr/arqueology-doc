@@ -269,6 +269,10 @@ pub fn run(project: &Project, args: SyncArgs) -> Result<()> {
         }
     }
     state.set_stale_notes(index::stale_notes(project));
+    // Commit documentado: `sync` acaba de comparar las fuentes con los hashes
+    // (lo usa `adoc context` para avisar de cambios posteriores). `scan` no
+    // lo escribe porque no re-verifica las notas.
+    state.knowledge_commit = archeology_core::gitcmd::head_commit(&project.root);
     state.save(&project.state_file())?;
     index::write_mocs(project)?;
     Ok(())

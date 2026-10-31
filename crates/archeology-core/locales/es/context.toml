@@ -1,0 +1,70 @@
+# `adoc context`: avisos del contrato JSON (`context.*`, core) y la salida
+# de texto/markdown (`cli.context.*`), en el idioma de la interfaz.
+# Marcadores: {nombre}. Mantener las mismas claves y marcadores que
+# locales/en/context.toml.
+
+[context.warn]
+state_unreadable = "No se pudo leer state.json ({error}); la detección de notas desactualizadas puede estar incompleta"
+no_inventory = "Todavía no hay inventario: no se conocen los módulos ni los tests desactivados (ejecuta `adoc scan`)"
+commit_mismatch = "{count} archivo(s) de código cambiaron entre el commit documentado {knowledge} y HEAD {head}: ejecuta `adoc sync` para detectar notas desactualizadas"
+commit_unknown = "El commit documentado {knowledge} no está en el historial de este repositorio (HEAD es {head}): ejecuta `adoc sync`"
+unresolved = "No se pudo resolver `{input}`"
+unresolved_suggest = "No se pudo resolver `{input}`; ¿quisiste decir: {suggestions}?"
+query_no_match = "Ninguna nota coincide con la búsqueda `{query}`"
+ambiguous = "`{input}` es ambiguo; se incluyen todas las coincidencias: {matches}"
+secret_target = "`{input}` coincide con los patrones de secretos (scan.secrets_patterns) y se excluye"
+secret_evidence = "Se omitieron {count} evidencia(s) a archivos excluidos por los patrones de secretos"
+max_notes = "Se muestran {shown} de {total} notas (--max-notes)"
+max_chars = "El contenido de las notas se recortó a {max} caracteres en total (--max-chars)"
+undocumented = "Ninguna nota cita archivos de `{path}`: documéntalo con `adoc inspect`"
+stale = "{count} nota(s) desactualizada(s): verifícalas antes de confiar en ellas (`adoc sync`, `adoc inspect`)"
+stale_pending = "{count} nota(s) desactualizada(s) ({pending} con fuentes cambiadas desde el último sync: ejecuta `adoc sync`)"
+
+[context.stale]
+secret_source = "una fuente excluida por los patrones de secretos"
+marked = "marcada como desactualizada por adoc sync"
+marked_sources = "marcada como desactualizada por adoc sync: cambió {sources}"
+pending = "la fuente cambió desde el último sync: {files}; ejecuta adoc sync"
+
+[cli.context]
+heading = "Contexto"
+no_match = "No se pudo resolver ningún objetivo."
+targets = "Objetivos"
+unresolved = "Sin resolver"
+resolved_as = "{input} → {kind}"
+none = "—"
+next = "Siguiente paso"
+next_inspect = "adoc inspect   # documentar la zona"
+next_sync = "adoc sync      # actualizar las notas desactualizadas"
+next_json = "adoc context {target} --format json   # contexto completo para un agente"
+relevance = "relevancia {value}"
+stale_tag = "desactualizada"
+evidence = "Evidencias"
+invalid_evidence = "evidencia inválida"
+more = "+{count} más"
+covered = "{count} cubiertos"
+missing = "{count} faltantes"
+disabled = "{count} desactivados"
+scenario_missing = "falta: {scenario}"
+outgoing = "usa"
+incoming = "usado por"
+format_conflict = "--json no se puede combinar con --format {format}"
+invalid_include = "Sección desconocida en --include: `{value}` (válidas: {valid})"
+needs_target = "Indica al menos un objetivo (ruta, module:<nombre>, feature:<nombre>) o --query"
+tests_none = "No hay reportes de tests ni tests desactivados en esta zona."
+
+[cli.context.section]
+zone = "Zona"
+modules = "Módulos"
+features = "Funcionalidades"
+notes = "Notas"
+findings = "Hallazgos abiertos"
+tests = "Tests"
+dependencies = "Dependencias"
+decisions = "Decisiones"
+glossary = "Glosario"
+questions = "Preguntas abiertas"
+warnings = "Avisos"
+
+[cli.doctor]
+context_contract = "Contrato JSON de `adoc context`: schema_version {version}"

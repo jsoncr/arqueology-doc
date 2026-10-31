@@ -91,6 +91,8 @@ pub enum Commands {
     Graph(commands::graph::GraphArgs),
     /// Project snapshot: structure, progress, pending tasks and next step (`--format json` for integrations).
     Status(commands::status::StatusArgs),
+    /// Documented context of code zones (notes, findings, tests, dependencies) for agents and scripts.
+    Context(commands::context_cmd::ContextArgs),
     /// Check requirements: git, Node, VitePress, OpenSpec, agents and configuration.
     Doctor(commands::doctor::DoctorArgs),
     /// Update `adoc` to the latest published version (`--check` only reports).
@@ -131,13 +133,40 @@ fn lang_flag(args: &[std::ffi::OsString]) -> Option<String> {
     None
 }
 
+/// Primer argumento que no es una opción global: el subcomando (`context`).
+fn subcommand_name(args: &[std::ffi::OsString]) -> Option<String> {
+    let mut it = args.iter().skip(1).map(|a| a.to_string_lossy());
+    while let Some(a) = it.next() {
+        if a == "--project" || a == "--lang" {
+            it.next();
+            continue;
+        }
+        if a.starts_with('-') {
+            continue;
+        }
+        return Some(a.to_string());
+    }
+    None
+}
+
 /// Punto de entrada compartido por los binarios `adoc` y `archeology-doc`.
 pub fn main_entry() -> Result<()> {
     // Idioma de la interfaz: se fija una sola vez, antes de cualquier mensaje.
     let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
     let flag = lang_flag(&args);
     archeology_core::i18n::init_ui_lang(flag.as_deref());
-    let matches = localized_command(archeology_core::i18n::ui_lang()).get_matches_from(args);
+    let is_context = subcommand_name(&args).as_deref() == Some("context");
+    let matches =
+        match localized_command(archeology_core::i18n::ui_lang()).try_get_matches_from(args) {
+            Ok(m) => m,
+            // `adoc context`: un error de uso es el código 1 del contrato (clap
+            // usa 2, que en `context` significa "ningún objetivo resuelto").
+            Err(e) if is_context && e.use_stderr() => {
+                let _ = e.print();
+                std::process::exit(commands::context_cmd::EXIT_USAGE);
+            }
+            Err(e) => e.exit(),
+        };
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
     // clap y el análisis previo deben coincidir (mismo flag global).
     debug_assert_eq!(cli.lang, flag);

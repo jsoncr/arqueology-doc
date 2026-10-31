@@ -9,12 +9,11 @@
 //! - `evidence`: `sources: [ruta:línea]` → nodo de código (`kind: code`).
 
 use crate::frontmatter::NoteFrontmatter;
-use crate::index::{source_file, source_lines, vault_notes};
+use crate::index::{load_vault, source_file, source_lines, VaultNote};
 use crate::project::Project;
 use crate::validate::extract_wikilinks;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::path::PathBuf;
 
 #[derive(Debug, Serialize)]
@@ -51,31 +50,24 @@ pub struct Edge {
 
 /// Construye el grafo completo del vault del proyecto.
 pub fn build(project: &Project) -> Graph {
-    let knowledge = project.knowledge_dir();
-    let stale: BTreeSet<String> = crate::index::stale_notes(project).into_iter().collect();
+    build_from(project, &load_vault(project))
+}
 
-    struct Parsed {
-        id: String,
-        fm: Option<NoteFrontmatter>,
-        text: String,
-        file: PathBuf,
+/// Construye el grafo a partir de notas ya leídas ([`load_vault`]).
+pub fn build_from(project: &Project, notes: &[VaultNote]) -> Graph {
+    struct Parsed<'a> {
+        id: &'a str,
+        fm: Option<&'a NoteFrontmatter>,
+        text: &'a str,
+        file: &'a PathBuf,
     }
-    let parsed: Vec<Parsed> = vault_notes(project)
-        .into_iter()
-        .filter_map(|file| {
-            let text = fs::read_to_string(&file).ok()?;
-            let id = file
-                .strip_prefix(&knowledge)
-                .ok()?
-                .with_extension("")
-                .to_string_lossy()
-                .replace('\\', "/");
-            Some(Parsed {
-                id,
-                fm: NoteFrontmatter::parse(&text),
-                text,
-                file,
-            })
+    let parsed: Vec<Parsed> = notes
+        .iter()
+        .map(|n| Parsed {
+            id: &n.id,
+            fm: n.fm.as_ref(),
+            text: &n.text,
+            file: &n.file,
         })
         .collect();
 
@@ -84,11 +76,11 @@ pub fn build(project: &Project) -> Graph {
     let mut by_stem: BTreeMap<String, String> = BTreeMap::new();
     let mut by_note_id: BTreeMap<String, String> = BTreeMap::new();
     for p in &parsed {
-        by_path.insert(p.id.clone(), p.id.clone());
-        let stem = p.id.rsplit('/').next().unwrap_or(&p.id).to_string();
-        by_stem.entry(stem).or_insert_with(|| p.id.clone());
-        if let Some(note_id) = p.fm.as_ref().and_then(|f| f.id.clone()) {
-            by_note_id.insert(note_id, p.id.clone());
+        by_path.insert(p.id.to_string(), p.id.to_string());
+        let stem = p.id.rsplit('/').next().unwrap_or(p.id).to_string();
+        by_stem.entry(stem).or_insert_with(|| p.id.to_string());
+        if let Some(note_id) = p.fm.and_then(|f| f.id.clone()) {
+            by_note_id.insert(note_id, p.id.to_string());
         }
     }
     let resolve = |target: &str| -> Option<String> {
@@ -118,7 +110,7 @@ pub fn build(project: &Project) -> Graph {
     };
 
     for p in &parsed {
-        let fm = p.fm.as_ref();
+        let fm = p.fm;
         let get = |k: &str| {
             fm.and_then(|f| f.get(k))
                 .and_then(|v| v.as_str())
@@ -137,39 +129,39 @@ pub fn build(project: &Project) -> Graph {
         let kind = fm
             .and_then(|f| f.note_type.clone())
             .unwrap_or_else(|| "unknown".into());
-        let rel = project.rel(&p.file);
         nodes.push(Node {
-            id: p.id.clone(),
+            id: p.id.to_string(),
             title: fm
                 .and_then(|f| f.title.clone())
-                .unwrap_or_else(|| p.id.rsplit('/').next().unwrap_or(&p.id).to_string()),
+                .unwrap_or_else(|| p.id.rsplit('/').next().unwrap_or(p.id).to_string()),
             kind: kind.clone(),
             status: fm.and_then(|f| f.status.clone()),
             severity: get("severity"),
             state: get("state"),
-            stale: stale.contains(&rel),
+            // Mismo criterio que `index::stale_notes`.
+            stale: fm.is_some_and(crate::validate::is_stale),
             file: p.file.clone(),
             line: None,
         });
 
-        for target in extract_wikilinks(&p.text) {
+        for target in extract_wikilinks(p.text) {
             if let Some(t) = resolve(&target) {
-                add(&p.id, t, "link", &mut edges);
+                add(p.id, t, "link", &mut edges);
             }
         }
         for r in list("related") {
             if let Some(t) = resolve(&r) {
-                add(&p.id, t, "related", &mut edges);
+                add(p.id, t, "related", &mut edges);
             }
         }
         for m in list("modules") {
             if let Some(t) = resolve(&format!("modules/{m}")) {
-                add(&p.id, t, "module", &mut edges);
+                add(p.id, t, "module", &mut edges);
             }
         }
         if kind == "test-report" {
             if let Some(t) = get("feature").and_then(|f| resolve(&f)) {
-                add(&p.id, t, "tests", &mut edges);
+                add(p.id, t, "tests", &mut edges);
             }
         }
         if let Some(f) = fm {
@@ -177,7 +169,7 @@ pub fn build(project: &Project) -> Graph {
                 let file = source_file(src).to_string();
                 let line = source_lines(src).map(|(a, _)| a);
                 code.entry(file.clone()).or_insert(line);
-                add(&p.id, format!("code:{file}"), "evidence", &mut edges);
+                add(p.id, format!("code:{file}"), "evidence", &mut edges);
             }
         }
     }
@@ -296,6 +288,7 @@ pub fn summary(graph: &Graph) -> Summary {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     fn node(id: &str, kind: &str) -> Node {
         Node {

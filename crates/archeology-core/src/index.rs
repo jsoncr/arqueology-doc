@@ -87,6 +87,61 @@ pub fn vault_notes(project: &Project) -> Vec<PathBuf> {
     out
 }
 
+/// Nota del vault leída y parseada una sola vez (la comparten el grafo y
+/// `adoc context`).
+#[derive(Debug, Clone)]
+pub struct VaultNote {
+    /// Ruta absoluta.
+    pub file: PathBuf,
+    /// Ruta relativa a la raíz del proyecto (`knowledge/modules/a.md`).
+    pub rel: String,
+    /// Ruta relativa al vault sin `.md` (`modules/a`): id de nodo del grafo.
+    pub id: String,
+    /// Texto completo.
+    pub text: String,
+    pub fm: Option<NoteFrontmatter>,
+}
+
+impl VaultNote {
+    /// Último segmento del id (`modules/a` → `a`).
+    pub fn stem(&self) -> &str {
+        self.id.rsplit('/').next().unwrap_or(&self.id)
+    }
+
+    /// Tipo de nota del frontmatter (`unknown` si falta).
+    pub fn kind(&self) -> &str {
+        self.fm
+            .as_ref()
+            .and_then(|f| f.note_type.as_deref())
+            .unwrap_or("unknown")
+    }
+}
+
+/// Lee y parsea todas las notas del vault (orden por ruta). Las ilegibles
+/// se omiten.
+pub fn load_vault(project: &Project) -> Vec<VaultNote> {
+    let knowledge = project.knowledge_dir();
+    vault_notes(project)
+        .into_iter()
+        .filter_map(|file| {
+            let text = fs::read_to_string(&file).ok()?;
+            let id = file
+                .strip_prefix(&knowledge)
+                .ok()?
+                .with_extension("")
+                .to_string_lossy()
+                .replace('\\', "/");
+            Some(VaultNote {
+                rel: project.rel(&file),
+                fm: NoteFrontmatter::parse(&text),
+                id,
+                text,
+                file,
+            })
+        })
+        .collect()
+}
+
 fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;

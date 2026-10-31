@@ -93,7 +93,7 @@ dependencies = [
 
 [[package]]
 name = "archeology-agents"
-version = "0.10.22"
+version = "0.10.30"
 dependencies = [
  "anyhow",
  "archeology-core",
@@ -109,7 +109,7 @@ dependencies = [
 
 [[package]]
 name = "archeology-cli"
-version = "0.10.22"
+version = "0.10.30"
 dependencies = [
  "anyhow",
  "archeology-agents",
@@ -140,7 +140,7 @@ dependencies = [
 
 [[package]]
 name = "archeology-core"
-version = "0.10.22"
+version = "0.10.30"
 dependencies = [
  "anyhow",
  "blake3",
@@ -157,7 +157,7 @@ dependencies = [
 
 [[package]]
 name = "archeology-openspec"
-version = "0.10.22"
+version = "0.10.30"
 dependencies = [
  "anyhow",
  "archeology-core",
@@ -170,7 +170,7 @@ dependencies = [
 
 [[package]]
 name = "archeology-registry"
-version = "0.10.22"
+version = "0.10.30"
 dependencies = [
  "anyhow",
  "archeology-core",
@@ -184,7 +184,7 @@ dependencies = [
 
 [[package]]
 name = "archeology-scan"
-version = "0.10.22"
+version = "0.10.30"
 dependencies = [
  "anyhow",
  "archeology-core",

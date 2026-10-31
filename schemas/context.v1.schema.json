@@ -1,0 +1,231 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jcruz/archeology-doc/schemas/context.v1.schema.json",
+  "title": "adoc context — schema_version 1",
+  "description": "Output of `adoc context --format json`. Lists are always present (never null); paths are relative to the project root with `/`. New optional fields may be added without changing schema_version; consumers must ignore unknown fields.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "adoc_version",
+    "project",
+    "resolved_targets",
+    "unresolved_targets",
+    "modules",
+    "features",
+    "notes",
+    "findings",
+    "tests",
+    "dependencies",
+    "decisions",
+    "glossary",
+    "open_questions",
+    "warnings"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer", "enum": [1] },
+    "adoc_version": { "type": "string" },
+    "project": {
+      "type": "object",
+      "required": ["id", "name", "root", "knowledge_commit", "head_commit", "generated_at"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "root": { "type": "string" },
+        "knowledge_commit": { "type": ["string", "null"] },
+        "head_commit": { "type": ["string", "null"] },
+        "generated_at": { "type": "string" }
+      }
+    },
+    "resolved_targets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["input", "kind", "matches"],
+        "properties": {
+          "input": { "type": "string" },
+          "kind": { "type": "string", "enum": ["path", "module", "feature", "query"] },
+          "matches": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "unresolved_targets": { "type": "array", "items": { "type": "string" } },
+    "modules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "summary", "paths", "note", "stale"],
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "summary": { "type": "string" },
+          "paths": { "type": "array", "items": { "type": "string" } },
+          "note": { "type": ["string", "null"] },
+          "stale": { "type": "boolean" }
+        }
+      }
+    },
+    "features": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "summary", "modules", "note", "stale"],
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "summary": { "type": "string" },
+          "modules": { "type": "array", "items": { "type": "string" } },
+          "note": { "type": "string" },
+          "stale": { "type": "boolean" }
+        }
+      }
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "title", "type", "relevance", "stale", "stale_reason", "content", "truncated", "evidence"],
+        "properties": {
+          "path": { "type": "string" },
+          "title": { "type": "string" },
+          "type": { "type": "string" },
+          "relevance": { "type": "number", "minimum": 0, "maximum": 1 },
+          "stale": { "type": "boolean" },
+          "stale_reason": { "type": ["string", "null"] },
+          "content": { "type": "string" },
+          "truncated": { "type": "boolean" },
+          "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } }
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "severity", "category", "kind", "title", "summary", "status", "evidence", "note", "stale"],
+        "properties": {
+          "id": { "type": "string" },
+          "severity": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
+          "category": {
+            "type": "string",
+            "enum": ["contradiction", "outdated_doc", "duplicated_rule", "config_conflict", "dead_code", "other"]
+          },
+          "kind": { "type": "string" },
+          "title": { "type": "string" },
+          "summary": { "type": "string" },
+          "status": { "type": "string", "enum": ["open", "resolved", "dismissed"] },
+          "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } },
+          "note": { "type": "string" },
+          "stale": { "type": "boolean" }
+        }
+      }
+    },
+    "tests": {
+      "type": "object",
+      "required": ["covered", "missing", "disabled_or_empty"],
+      "properties": {
+        "covered": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["feature", "scenario", "tests"],
+            "properties": {
+              "feature": { "type": "string" },
+              "scenario": { "type": "string" },
+              "tests": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        },
+        "missing": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["feature", "scenario"],
+            "properties": {
+              "feature": { "type": "string" },
+              "scenario": { "type": "string" }
+            }
+          }
+        },
+        "disabled_or_empty": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["file", "line", "reason"],
+            "properties": {
+              "file": { "type": "string" },
+              "line": { "type": ["integer", "null"], "minimum": 1 },
+              "reason": { "type": "string", "enum": ["disabled", "empty"] }
+            }
+          }
+        }
+      }
+    },
+    "dependencies": {
+      "type": "object",
+      "required": ["outgoing", "incoming"],
+      "properties": {
+        "outgoing": { "type": "array", "items": { "$ref": "#/$defs/edge" } },
+        "incoming": { "type": "array", "items": { "$ref": "#/$defs/edge" } }
+      }
+    },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["title", "note", "summary"],
+        "properties": {
+          "title": { "type": "string" },
+          "note": { "type": "string" },
+          "summary": { "type": "string" }
+        }
+      }
+    },
+    "glossary": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["term", "definition", "note"],
+        "properties": {
+          "term": { "type": "string" },
+          "definition": { "type": "string" },
+          "note": { "type": "string" }
+        }
+      }
+    },
+    "open_questions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "question", "related"],
+        "properties": {
+          "id": { "type": "string" },
+          "question": { "type": "string" },
+          "related": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "warnings": { "type": "array", "items": { "type": "string" } }
+  },
+  "$defs": {
+    "evidence": {
+      "type": "object",
+      "required": ["file", "line", "end_line", "valid"],
+      "properties": {
+        "file": { "type": "string" },
+        "line": { "type": ["integer", "null"], "minimum": 0 },
+        "end_line": { "type": ["integer", "null"], "minimum": 0 },
+        "valid": { "type": "boolean" }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "required": ["from", "to", "depth", "kinds"],
+      "properties": {
+        "from": { "type": "string" },
+        "to": { "type": "string" },
+        "depth": { "type": "integer", "minimum": 1 },
+        "kinds": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

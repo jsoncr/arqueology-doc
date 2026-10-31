@@ -21,6 +21,7 @@
 //! - [`validate`]: validaciones del comando `check`.
 //! - [`task_context`]: re-verificación y retroalimentación en los archivos de tarea.
 //! - [`trust`]: aprobación de los adaptadores definidos en el repositorio.
+//! - [`zone`]: contexto documentado de una zona del código (`adoc context`).
 
 pub mod config;
 pub mod context;
@@ -43,6 +44,7 @@ pub mod task_context;
 pub mod templates;
 pub mod trust;
 pub mod validate;
+pub mod zone;
 
 pub use config::ArcheologyConfig;
 pub use error::{Error, Result};

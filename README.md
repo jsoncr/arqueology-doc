@@ -92,6 +92,7 @@ adoc plan            # genera tareas acotadas en ~/.archeology-doc/projects/<pro
 adoc inspect         # ejecuta con el agente configurado (o exporta en modo manual)
 adoc review          # resumen: hallazgos, tests, progreso
 adoc status          # resumen del proyecto y siguiente paso sugerido
+adoc context src/billing/   # contexto documentado de una zona (notas, hallazgos, tests, dependencias)
 adoc check           # qué está hecho, qué falta y cómo arreglarlo (código de salida para CI)
 ```
 
@@ -237,6 +238,7 @@ las tareas `done` nunca se tocan.
 | `status` | Resumen del proyecto en una pantalla: tipo, lenguajes, tamaño, git, estructura generada, progreso, tareas pendientes, preguntas, hallazgos, agente y el siguiente paso. `--format json`: estado completo (usado por la extensión) |
 | `preview` | Sitio con dashboard en el navegador; sin VitePress, el reporte HTML (`--port`, `--no-open`) |
 | `report` | Reporte HTML único o Markdown (`--format`, `--out`, `--no-open`) |
+| `context <objetivo>...` | Contexto documentado de una o varias zonas del código en una llamada, para agentes y scripts: módulos, funcionalidades, notas por relevancia, hallazgos abiertos, escenarios cubiertos/faltantes, dependencias del grafo, decisiones, glosario y preguntas abiertas. Objetivos: ruta, `module:<nombre>`, `feature:<nombre>` o un nombre sin prefijo (`--query`, `--depth`, `--include`, `--max-notes`, `--max-chars`, `--content none\|excerpt\|full`, `--format text\|json\|markdown` o `--json`, `--fail-on-stale`, `--all-findings`). Códigos: 0 éxito, 1 uso/proyecto, 2 nada resuelto, 3 notas desactualizadas con `--fail-on-stale`. Contrato: [`docs/context.md`](docs/context.md) |
 | `graph` | Grafo del conocimiento: genera el HTML interactivo y lo abre en el navegador; `--json` imprime el JSON (vista de la extensión) (`--out`, `--no-open`; `ADOC_NO_OPEN=1` evita el navegador) |
 | `ask "<pregunta>"` | Pregunta al agente; la respuesta queda en la FAQ (`--agent`, `--model`) |
 | `doctor` | Verifica requisitos del CLI y del proyecto; código 1 si falta algo obligatorio (`--format`) |
@@ -325,6 +327,58 @@ adoc graph --json                 # JSON (lo usa la extensión; `--format json` 
   van en `docs/public/adoc-graph/` (marcada como generada: si existe sin la marca, `site sync` no la toca).
 - Textos: la página de `adoc graph` y el resumen de `review` usan el idioma de la interfaz; el reporte y
   el sitio, el de la documentación del proyecto.
+
+## Uso programático
+
+`adoc context` entrega en una sola llamada lo documentado sobre una zona del código, sin agentes ni red
+(solo `knowledge/`, el estado local y `git`). Es el punto de entrada para agentes, scripts y la software factory:
+
+```bash
+adoc context src/billing/ --format json            # contrato JSON estable (schema_version 1)
+adoc context module:billing feature:checkout       # varios objetivos; texto en la terminal
+adoc context src/billing/invoice.py --format markdown --max-chars 4000   # bloque para el prompt de un agente
+adoc context --query "redondeo" --include notes,findings
+adoc context src/ --fail-on-stale                  # código 3 si alguna nota está desactualizada (CI)
+```
+
+Extracto de `adoc context src/billing/ --format json`:
+
+```json
+{
+  "schema_version": 1,
+  "adoc_version": "0.10.22",
+  "project": { "id": "4ced…", "root": "/ruta/proj", "knowledge_commit": "2865e3a…", "head_commit": "6b4db88…", "generated_at": "2026-10-31T00:07:34Z" },
+  "resolved_targets": [{ "input": "src/billing/", "kind": "path", "matches": ["module:billing", "module:src"] }],
+  "unresolved_targets": [],
+  "modules": [{ "id": "module:billing", "title": "Facturación", "summary": "Cobros, facturas e impuestos.", "paths": ["src/billing/"], "note": "knowledge/modules/billing.md", "stale": false }],
+  "features": [{ "id": "feature:checkout", "title": "Checkout", "summary": "Cobra el carrito y emite la factura.", "modules": ["module:billing"], "note": "knowledge/features/checkout.md", "stale": false }],
+  "notes": [{ "path": "knowledge/modules/billing.md", "title": "Facturación", "type": "module", "relevance": 0.9, "stale": false, "stale_reason": null,
+              "content": "Cobros, facturas e impuestos.", "truncated": false,
+              "evidence": [{ "file": "src/billing/invoice.py", "line": 1, "end_line": 5, "valid": true }] }],
+  "findings": [{ "id": "find-rounding", "severity": "high", "category": "contradiction", "kind": "contradiction", "title": "Redondeo distinto",
+                 "summary": "El total redondea distinto que el impuesto.", "status": "open",
+                 "evidence": [{ "file": "src/billing/invoice.py", "line": 4, "end_line": 99, "valid": false }],
+                 "note": "knowledge/findings/rounding.md", "stale": false }],
+  "tests": {
+    "covered": [{ "feature": "feature:checkout", "scenario": "Cobro exitoso", "tests": ["src/billing/test_invoice.py:3"] }],
+    "missing": [{ "feature": "feature:checkout", "scenario": "Tarjeta rechazada" }],
+    "disabled_or_empty": [{ "file": "src/billing/test_invoice.py", "line": null, "reason": "disabled" }]
+  },
+  "dependencies": { "outgoing": [{ "from": "feature:checkout", "to": "module:auth", "depth": 1, "kinds": ["link"] }], "incoming": [] },
+  "decisions": [],
+  "glossary": [{ "term": "IVA", "definition": "Impuesto al valor agregado.", "note": "knowledge/glossary/iva.md" }],
+  "open_questions": [],
+  "warnings": ["1 archivo(s) de código cambiaron entre el commit documentado 2865e3a6 y HEAD 6b4db88f: ejecuta `adoc sync` para detectar notas desactualizadas"]
+}
+```
+
+- **Contrato**: [`docs/context.md`](docs/context.md) y el JSON Schema [`schemas/context.v1.schema.json`](schemas/context.v1.schema.json).
+  `--format json` es el formato canónico; `--json` es un alias. `adoc doctor` muestra la versión del contrato
+  (`context_schema_version` en su JSON).
+- **Criterios compartidos**: `stale` es el de `adoc sync` (marcada, o con una fuente citada que cambió desde el
+  último `sync`: `stale_reason` lo explica); `evidence[].valid` es el de `adoc check`. El aviso de commit
+  solo aparece si cambió código (no el vault) desde el último `sync`. Nunca se incluyen archivos
+  que coinciden con `scan.secrets_patterns`, aunque una nota los cite.
 
 ## Cuando el agente pregunta
 
@@ -429,6 +483,8 @@ templates/{en,es}/      # plantillas de notas, tareas y sitio, por idioma
 crates/archeology-core/assets/           # renderizador del grafo (graph.js/.css), copia única
 crates/archeology-core/locales/{en,es}/  # catálogos de mensajes (i18n)
 fixtures/               # repos de prueba: small-node, medium-ts, legacy-py, with-openspec
+schemas/                # contratos JSON publicados (context.v1.schema.json)
+docs/                   # documentación de contratos (context.md)
 ```
 
 ## Desarrollo

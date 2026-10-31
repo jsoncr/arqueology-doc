@@ -20,6 +20,9 @@ locked: false
 
 ## Covered scenarios
 
+| Scenario | Tests |
+|----------|-------|
+
 ## Missing scenarios
 
 | Scenario | Type | Suggested priority |

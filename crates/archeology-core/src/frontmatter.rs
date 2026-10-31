@@ -300,32 +300,15 @@ pub fn validate_note(path: &Path, text: &str, project_root: &Path) -> Vec<NoteIs
 
     // Verificar que las evidencias existen: archivo y rango de líneas (RF-082).
     for src in &fm.sources {
-        let full = match resolve_source(project_root, src) {
-            SourceTarget::Outside => {
-                issues.push(evidence(
-                    &display,
-                    t!("core.note.source_outside", source = src),
-                ));
-                continue;
+        let message = match evidence_status(project_root, src) {
+            EvidenceStatus::Ok => continue,
+            EvidenceStatus::Outside => t!("core.note.source_outside", source = src),
+            EvidenceStatus::NotFound => t!("core.note.source_not_found", source = src),
+            EvidenceStatus::OutOfRange { total } => {
+                t!("core.note.source_out_of_range", source = src, total = total)
             }
-            SourceTarget::NotFound => {
-                issues.push(evidence(
-                    &display,
-                    t!("core.note.source_not_found", source = src),
-                ));
-                continue;
-            }
-            SourceTarget::File(full) => full,
         };
-        if let Some((a, b)) = crate::index::source_lines(src) {
-            let total = file_line_count(&full);
-            if a == 0 || a > b || b > total {
-                issues.push(evidence(
-                    &display,
-                    t!("core.note.source_out_of_range", source = src, total = total),
-                ));
-            }
-        }
+        issues.push(evidence(&display, message));
     }
 
     // Features y findings requieren al menos una evidencia (§17).
@@ -345,6 +328,37 @@ pub enum SourceTarget {
     NotFound,
     /// Archivo existente dentro del proyecto (ruta completa).
     File(std::path::PathBuf),
+}
+
+/// Validez de una evidencia `sources` según `adoc check` (RF-082): la usan
+/// `check` (vía [`validate_note`]) y `adoc context` (`evidence[].valid`).
+/// Solo lee el archivo citado para contar líneas si la evidencia tiene rango.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EvidenceStatus {
+    /// Archivo existente y rango (si lo hay) dentro del archivo.
+    Ok,
+    /// Ruta absoluta, con `..` o que sale del proyecto.
+    Outside,
+    /// El archivo no existe.
+    NotFound,
+    /// Rango inválido o más allá del final (`total` líneas).
+    OutOfRange { total: usize },
+}
+
+/// Calcula el [`EvidenceStatus`] de `src` (`ruta`, `ruta:10`, `ruta:10-20`).
+pub fn evidence_status(project_root: &Path, src: &str) -> EvidenceStatus {
+    let full = match resolve_source(project_root, src) {
+        SourceTarget::Outside => return EvidenceStatus::Outside,
+        SourceTarget::NotFound => return EvidenceStatus::NotFound,
+        SourceTarget::File(full) => full,
+    };
+    if let Some((a, b)) = crate::index::source_lines(src) {
+        let total = file_line_count(&full);
+        if a == 0 || a > b || b > total {
+            return EvidenceStatus::OutOfRange { total };
+        }
+    }
+    EvidenceStatus::Ok
 }
 
 /// Resuelve el archivo de una evidencia (`ruta`, `ruta:10`, `ruta:10-20`).

@@ -8,6 +8,8 @@ pub mod agent;
 pub mod ask;
 pub mod check;
 pub mod config;
+pub mod context_cmd;
+pub mod context_view;
 pub mod doctor;
 pub mod graph;
 pub mod init;
@@ -137,6 +139,16 @@ pub fn run(command: super::Commands, project_arg: Option<String>) -> Result<()> 
         Graph(args) => {
             let p = resolve_project(&project_arg)?;
             graph::run(&p, args)
+        }
+        Context(args) => {
+            // Solo lectura: sin lock ni registro. Sin proyecto o con un error
+            // de uso, código 1 (lo devuelve `main` al propagar el error).
+            let p = resolve_project(&project_arg)?;
+            let code = context_cmd::run(&p, args)?;
+            if code != 0 {
+                std::process::exit(code);
+            }
+            Ok(())
         }
         Ask(args) => {
             let p = resolve_project(&project_arg)?;
